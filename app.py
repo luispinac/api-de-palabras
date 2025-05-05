@@ -1,70 +1,78 @@
 from flask import Flask, request, jsonify
-import csv
 import random
+
 import os
+import psycopg2
+
+def conectar():
+    return psycopg2.connect(os.getenv("DATABASE_URL"))
 
 app = Flask(__name__)
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CSV_PATH = os.path.join(BASE_DIR, "palabras.csv")
-
-# Leer CSV al iniciar la app
-palabras = []
-with open(CSV_PATH, "r", encoding="utf-8") as archivo:
-    lector = csv.DictReader(archivo)
-    for fila in lector:
-        palabras.append({
-            "palabra": fila["palabra"],
-            "categoria": fila["categoria"]
-        })
-
+# DB_PATH = "palabras.db"
 
 @app.route("/") 
 def home():
     return "API de palabras en Flask - Funciona correctamente 😉"
 
-# /palabras?cantidad=5
 @app.route("/palabras")
-def palabras_aleatorias(): 
-    cantidad = int(request.args.get("cantidad", 2))
-    seleccionadas = random.sample(palabras, min(cantidad, len(palabras)))
-    return jsonify(seleccionadas)
+def palabras_aleatorias():
+    cantidad = int(request.args.get("cantidad", 1))
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute("SELECT palabra, categoria FROM palabras")
+    todas = cursor.fetchall()
+    conn.close()
 
-@app.route("/categorias")
-def listar_categorias():
-    categorias = []
-    for p in palabras:
-        cat = p["categoria"].lower()
-        if cat not in categorias:
-            categorias.append(cat)
-    return jsonify(sorted(categorias))
+    seleccionadas = random.sample(todas, min(cantidad, len(todas)))
+    return jsonify([{"palabra": p[0], "categoria": p[1]} for p in seleccionadas])
 
-# /palabras/categoria?tipo=animales
 @app.route("/palabras/categoria")
 def palabras_por_categoria():
     categoria = request.args.get("tipo", "").lower()
-    filtradas = [p["palabra"] for p in palabras if p["categoria"].lower() == categoria]
-    if filtradas:
-        return jsonify({"categoria": categoria, "palabras": filtradas})
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute("SELECT palabra FROM palabras WHERE LOWER(categoria) = ?", (categoria,))
+    resultado = [fila[0] for fila in cursor.fetchall()]
+    conn.close()
+
+    if resultado:
+        return jsonify({"categoria": categoria, "palabras": resultado})
     return jsonify({"error": "Categoría no encontrada"}), 404
 
-# /palabra/longitud?largo=6
 @app.route("/palabra/longitud")
 def palabra_por_largo():
     largo = int(request.args.get("largo", 5))
-    filtradas = [p["palabra"] for p in palabras if len(p["palabra"]) == largo]
-    if filtradas:
-        return jsonify({"palabra": random.choice(filtradas)})
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute("SELECT palabra FROM palabras WHERE LENGTH(palabra) = ?", (largo,))
+    resultado = [fila[0] for fila in cursor.fetchall()]
+    conn.close()
+
+    if resultado:
+        return jsonify({"palabra": random.choice(resultado)})
     return jsonify({"mensaje": "No hay palabras con esa longitud"}), 404
 
-# /palabra/inicia?letra=p
 @app.route("/palabra/inicia")
 def palabra_por_letra():
     letra = request.args.get("letra", "a").lower()
-    filtradas = [p["palabra"] for p in palabras if p["palabra"].startswith(letra)]
-    if filtradas:
-        return jsonify({"palabra": random.choice(filtradas)})
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute("SELECT palabra FROM palabras WHERE LOWER(palabra) LIKE ?", (letra + "%",))
+    resultado = [fila[0] for fila in cursor.fetchall()]
+    conn.close()
+
+    if resultado:
+        return jsonify({"palabra": random.choice(resultado)})
     return jsonify({"mensaje": "No hay palabras con esa letra"}), 404
+
+@app.route("/categorias")
+def listar_categorias():
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute("SELECT DISTINCT categoria FROM palabras")
+    categorias = [fila[0] for fila in cursor.fetchall()]
+    conn.close()
+    return jsonify(categorias)
 
 if __name__ == "__main__":
     app.run(debug=True)
